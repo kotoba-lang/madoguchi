@@ -91,3 +91,50 @@
         (:sla-due ticket')
         (pos? (compare (str now) (str (:sla-due ticket'))))))) ; already past due = breach
 
+;; ---------------------------------------------------------------------------
+;; escalation (raise priority + reassign)
+;; ---------------------------------------------------------------------------
+
+(def priority-rank {:low 0 :normal 1 :high 2 :urgent 3})
+
+(defn- rank-priority [p] (get priority-rank p 1))
+
+(defn escalate
+  "Escalate a ticket: bump priority one level (low→normal→high→urgent, capped at
+  :urgent), set :escalated-at, and optionally reassign. Returns the updated
+  ticket. If already :urgent, just sets :escalated-at."
+  ([t]
+   (escalate t nil))
+  ([t opts]
+   (let [cur (:priority t :normal)
+         cur-rank (rank-priority cur)
+         next-p (some #(when (= (rank-priority %) (inc cur-rank)) %)
+                      [:low :normal :high :urgent])
+         new-p (or next-p :urgent)]
+     (cond-> (assoc t :priority new-p :escalated true)
+       (:escalated-at opts) (assoc :escalated-at (:escalated-at opts))
+       (:assignee opts)     (assoc :assignee (:assignee opts))))))
+
+(defn escalated?
+  "True if the ticket has been escalated at least once."
+  [t] (true? (:escalated t)))
+
+(defn escalate-if-breach
+  "Escalate the ticket if SLA is breached (past due). Returns the (possibly
+  escalated) ticket. Passes `now` for the breach check."
+  [t now]
+  (if (sla-breach-imminent? t now)
+    (escalate t)
+    t))
+
+(defn escalation-activity
+  "Project an escalation event onto chobo.ledger (lane :support, kind :escalation)."
+  [t opts]
+  (ledger/activity
+   (merge {:lane :support :kind :escalation
+           :title (str "Escalated: " (:subject t))
+           :props {:ticket-id (:id t)
+                   :new-priority (:priority t :normal)
+                   :assignee (:assignee t)}}
+          opts)))
+
