@@ -2,7 +2,8 @@
   "Customer / CRM model (pure). Customer{:id :name :email :tags :order-refs
   :lifetime-value :contacts}. Contact log records inbound/outbound interactions."
 
-  (:refer-clojure :exclude [empty]))
+  (:refer-clojure :exclude [empty])
+  (:require [chobo.ledger :as ledger]))
 
 (defrecord Customer [id name email tags order-refs lifetime-value contacts])
 (defrecord Contact [id customer channel direction subject timestamp])
@@ -71,3 +72,49 @@
   ([c threshold]
    (or (contains? (:tags c #{}) :vip)
        (>= (:lifetime-value c 0) threshold))))
+
+;; ---------------------------------------------------------------------------
+;; NPS / satisfaction tracking
+;; ---------------------------------------------------------------------------
+
+(defn add-survey
+  "Record an NPS survey response on the customer. score 0–10. Returns the
+  updated customer with :surveys appended."
+  [c score opts]
+  (let [survey (merge {:score score :at (:at opts)} opts)]
+    (update c :surveys (fnil conj []) survey)))
+
+(defn nps-category
+  "Classify a score: 0–6 = :detractor, 7–8 = :passive, 9–10 = :promoter."
+  [score]
+  (cond
+    (<= score 6) :detractor
+    (<= score 8) :passive
+    :else :promoter))
+
+(defn nps-score
+  "Compute NPS from a seq of survey scores: %promoters − %detractors. Returns
+  an integer in [-100, 100]. nil if no surveys."
+  [scores]
+  (when (seq scores)
+    (let [total (count scores)
+          cats (map nps-category scores)
+          promoters (count (filter #{:promoter} cats))
+          detractors (count (filter #{:detractor} cats))]
+      (int (- (* 100 (/ promoters total)) (* 100 (/ detractors total)))))))
+
+(defn customer-nps
+  "Compute the NPS from a customer's :surveys. nil if no surveys."
+  [c]
+  (nps-score (map :score (:surveys c []))))
+
+(defn survey-activity
+  "Build a ledger activity for a survey/NPS event (lane :support, kind :nps)."
+  [c score opts]
+  (ledger/activity
+   (merge {:lane :support :kind :nps
+           :title (str "NPS survey: " (:id c))
+           :props {:customer-id (:id c)
+                   :score score
+                   :category (nps-category score)}}
+          opts)))
