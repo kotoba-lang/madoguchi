@@ -138,3 +138,34 @@
                    :assignee (:assignee t)}}
           opts)))
 
+;; ---------------------------------------------------------------------------
+;; ticket merge (combine duplicate / related tickets)
+;; ---------------------------------------------------------------------------
+
+(defn merge-tickets
+  "Merge `source` ticket into `target`. The target keeps its id; all messages
+  from source are appended; source's :id is recorded in target's :merged-from.
+  Returns the merged target. The host app closes the source (this fn doesn't
+  mutate source)."
+  [target source]
+  (-> target
+      (update :messages (fnil concat []) (:messages source []))
+      (update :merged-from (fnil conj []) (:id source))
+      (update :priority (fn [p]
+                          (let [pr {:low 0 :normal 1 :high 2 :urgent 3}]
+                            (if (>= (get pr (:priority source :normal) 1)
+                                    (get pr p 1))
+                              (:priority source)
+                              p))))))
+
+(defn merge-activity
+  "Project a ticket-merge event onto chobo.ledger (lane :support, kind :merge)."
+  [target source opts]
+  (ledger/activity
+   (merge {:lane :support :kind :merge
+           :title (str "Merged " (:id source) " → " (:id target))
+           :props {:target-id (:id target)
+                   :source-id (:id source)
+                   :messages-count (count (:messages target []))}}
+          opts)))
+
