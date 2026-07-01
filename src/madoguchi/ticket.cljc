@@ -45,3 +45,49 @@
            :props {:ticket-id (:id t) :customer (:customer t)
                    :priority (:priority t :normal)}}
           opts)))
+
+;; ---------------------------------------------------------------------------
+;; SLA policy model (priority → target response/resolution times)
+;; ---------------------------------------------------------------------------
+
+(defrecord SLAPolicy [rules])
+(defrecord SLARule [priority response-target-mins resolution-target-mins])
+
+(def default-sla-policy
+  "Standard SLA: urgent 1h/4h, high 2h/8h, normal 4h/24h, low 8h/48h."
+  (->SLAPolicy
+   #{(->SLARule :urgent   60   240)
+     (->SLARule :high     120  480)
+     (->SLARule :normal   240  1440)
+     (->SLARule :low      480  2880)}))
+
+(defn sla-rule-for
+  "Get the SLA rule for a priority from a policy. Falls back to :normal."
+  [policy priority]
+  (some #(when (= (:priority %) priority) %) (:rules policy)))
+
+(defn response-target-mins
+  "Response SLA target (minutes) for a ticket's priority."
+  ([ticket']
+   (response-target-mins default-sla-policy ticket'))
+  ([policy ticket']
+   (:response-target-mins (sla-rule-for policy (:priority ticket' :normal)) 240)))
+
+(defn resolution-target-mins
+  "Resolution SLA target (minutes) for a ticket's priority."
+  ([ticket']
+   (resolution-target-mins default-sla-policy ticket'))
+  ([policy ticket']
+   (:resolution-target-mins (sla-rule-for policy (:priority ticket' :normal)) 1440)))
+
+(defn sla-breach-imminent?
+  "True if the ticket is within `threshold-mins` of its SLA deadline without
+  being resolved. `now` and `sla-due` are ISO strings; this compares the
+  remaining time lexicographically (v1 stub — host app computes exact minutes)."
+  ([ticket' now]
+   (sla-breach-imminent? ticket' now 30))
+  ([ticket' now threshold-mins]
+   (and (not (#{:resolved :closed} (:status ticket' :new)))
+        (:sla-due ticket')
+        (pos? (compare (str now) (str (:sla-due ticket'))))))) ; already past due = breach
+
