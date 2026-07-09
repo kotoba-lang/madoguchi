@@ -80,16 +80,49 @@
   ([policy ticket']
    (:resolution-target-mins (sla-rule-for policy (:priority ticket' :normal)) 1440)))
 
+(defn- civil-day-number
+  "Proleptic-Gregorian day number (days since 1970-01-01) for calendar
+  y/m/d. Howard Hinnant's days_from_civil algorithm (public domain) -- pure
+  integer arithmetic, correct across month/year/leap-year boundaries, no
+  host date library needed (portable .cljc)."
+  [y m d]
+  (let [y   (if (<= m 2) (dec y) y)
+        era (quot (if (>= y 0) y (- y 399)) 400)
+        yoe (- y (* era 400))
+        doy (+ (quot (+ (* 153 (+ m (if (> m 2) -3 9))) 2) 5) (dec d))
+        doe (+ (* yoe 365) (quot yoe 4) (- (quot yoe 100)) doy)]
+    (+ (* era 146097) doe -719468)))
+
+(defn- iso-datetime->minutes
+  "Total minutes since epoch for an ISO-8601 'YYYY-MM-DDTHH:MM:SS[...]'
+  string, so `sla-breach-imminent?` can actually measure a duration instead
+  of only comparing string order."
+  [s]
+  (let [s (str s)
+        p (fn [i j] #?(:clj (Integer/parseInt (subs s i j))
+                       :cljs (js/parseInt (subs s i j) 10)))]
+    (+ (* (civil-day-number (p 0 4) (p 5 7) (p 8 10)) 24 60)
+       (* (p 11 13) 60)
+       (p 14 16))))
+
 (defn sla-breach-imminent?
-  "True if the ticket is within `threshold-mins` of its SLA deadline without
-  being resolved. `now` and `sla-due` are ISO strings; this compares the
-  remaining time lexicographically (v1 stub — host app computes exact minutes)."
+  "True if the ticket is within `threshold-mins` of its SLA deadline (or
+  already past it) without being resolved. `now`/`sla-due` are ISO
+  'YYYY-MM-DDTHH:MM:SS' strings; parsed into actual minutes so the
+  threshold is a real elapsed-time comparison. Falls back to a lexicographic
+  already-past-due check if either string doesn't parse (defensive, not the
+  normal path -- callers are expected to pass well-formed ISO strings)."
   ([ticket' now]
    (sla-breach-imminent? ticket' now 30))
   ([ticket' now threshold-mins]
    (and (not (#{:resolved :closed} (:status ticket' :new)))
         (:sla-due ticket')
-        (pos? (compare (str now) (str (:sla-due ticket'))))))) ; already past due = breach
+        (try
+          (<= (- (iso-datetime->minutes (:sla-due ticket'))
+                 (iso-datetime->minutes now))
+              threshold-mins)
+          (catch #?(:clj Exception :cljs js/Error) _
+            (pos? (compare (str now) (str (:sla-due ticket')))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; escalation (raise priority + reassign)

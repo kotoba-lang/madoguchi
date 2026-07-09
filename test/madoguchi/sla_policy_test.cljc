@@ -23,3 +23,31 @@
   (let [tk (t/ticket {:id "t1" :priority :normal :sla-due "2026-06-30T10:00:00"})]
     (is (t/sla-breach-imminent? (t/open tk) "2026-06-30T10:30:00"))   ; past due
     (is (not (t/sla-breach-imminent? (t/resolve-ticket (t/open tk)) "2026-06-30T10:30:00"))))) ; resolved
+
+(deftest breach-imminent-actually-honors-threshold-mins
+  (testing "threshold-mins must gate whether a not-yet-due ticket counts as
+            imminent -- regression: the 3-arity body never referenced its
+            threshold-mins parameter at all, so it behaved identically to
+            a plain already-past-due check no matter what threshold was
+            passed (even an absurdly large one)"
+    (let [tk (t/open (t/ticket {:id "t1" :priority :normal :sla-due "2026-06-30T10:00:00"}))
+          now "2026-06-30T09:50:00"] ; 10 minutes before sla-due
+      (is (not (t/sla-breach-imminent? tk now 1))
+          "1-minute threshold: 10 minutes away is NOT imminent")
+      (is (t/sla-breach-imminent? tk now 30)
+          "30-minute threshold (the default): 10 minutes away IS imminent")
+      (is (t/sla-breach-imminent? tk now 999999)
+          "an absurdly large threshold must catch any not-yet-due ticket")))
+  (testing "the threshold boundary is inclusive, and just-outside is excluded"
+    (let [tk (t/open (t/ticket {:id "t2" :priority :normal :sla-due "2026-06-30T10:00:00"}))]
+      (is (t/sla-breach-imminent? tk "2026-06-30T09:30:00" 30)
+          "exactly 30 minutes before due, threshold 30 -> imminent")
+      (is (not (t/sla-breach-imminent? tk "2026-06-30T09:29:00" 30))
+          "31 minutes before due, threshold 30 -> not yet imminent")))
+  (testing "an already-past-due ticket is imminent under any threshold, same as before"
+    (let [tk (t/open (t/ticket {:id "t3" :priority :normal :sla-due "2026-06-30T10:00:00"}))]
+      (is (t/sla-breach-imminent? tk "2026-06-30T10:01:00" 1))))
+  (testing "correct across a day boundary"
+    (let [tk (t/open (t/ticket {:id "t4" :priority :normal :sla-due "2026-07-01T00:05:00"}))]
+      (is (t/sla-breach-imminent? tk "2026-06-30T23:50:00" 30)
+          "15 minutes away, crossing midnight, threshold 30 -> imminent"))))
