@@ -182,7 +182,12 @@
   mutate source)."
   [target source]
   (-> target
-      (update :messages (fnil concat []) (:messages source []))
+      ;; `into` (not `concat`) so :messages stays a vector -- concat returns
+      ;; a lazy seq, and the next add-message's `conj` on a seq PREPENDS
+      ;; instead of appending (conj's "add at the natural end" semantics
+      ;; differ by collection type), silently reversing message order for
+      ;; any reply added after a merge.
+      (update :messages (fnil into []) (:messages source []))
       (update :merged-from (fnil conj []) (:id source))
       (update :priority (fn [p]
                           (let [pr {:low 0 :normal 1 :high 2 :urgent 3}]
