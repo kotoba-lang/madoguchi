@@ -16,6 +16,20 @@
     ;; priority upgraded to source's :high (higher than target's :normal)
     (is (= :high (:priority merged)))))
 
+(deftest merge-tickets-keeps-messages-a-vector-for-later-appends
+  (testing "a reply added AFTER a merge must land at the end, not the start --
+            regression: merge-tickets used (fnil concat []), which returns a
+            lazy-seq; conj on a seq PREPENDS (unlike conj on a vector, which
+            appends), so :messages silently became a seq that reversed
+            order on the very next add-message call"
+    (let [merged (t/merge-tickets target source)]
+      (is (vector? (:messages merged))
+          ":messages must stay a vector after merge, not degrade to a seq")
+      (let [merged+reply (t/add-message merged {:from :agent :body "Yes, true to size" :timestamp 3})]
+        (is (= ["Is M true to size?" "Also, the sleeves?" "Yes, true to size"]
+               (mapv :body (:messages merged+reply)))
+            "chronological order preserved: target's message, then source's, then the new reply LAST")))))
+
 (deftest merge-no-priority-downgrade-test
   (let [high-target (assoc target :priority :urgent)
         merged (t/merge-tickets high-target source)]
