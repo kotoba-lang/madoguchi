@@ -14,8 +14,8 @@ Portable .cljc on [`chobo.ledger`](../chobo) (lane `:support`) +
 | `madoguchi.ssr` | SSR parity |
 
 ```bash
-clojure -M:test       # published deps
-clojure -M:local:test # local ../shitsuke ../chobo
+kbb -M:test       # published deps
+kbb -M:local:test # local ../shitsuke ../chobo
 ```
 
 See `docs/design.md` and `docs/adr/0001-madoguchi-support-crm.md`.
